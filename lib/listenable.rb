@@ -9,6 +9,8 @@ require_relative "listenable/concern"
 require_relative "listenable/railtie" if defined?(Rails)
 
 module Listenable
+  mattr_accessor :enabled, default: true
+
   class Error < StandardError; end
   # Your code goes here...
 end
