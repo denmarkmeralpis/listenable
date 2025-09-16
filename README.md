@@ -1,28 +1,76 @@
 # Listenable
 
-TODO: Delete this and the text below, and describe your gem
+Listenable is a Rails DSL that connects your ActiveRecord models to dedicated listener classes using `ActiveSupport::Notifications`.
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/listenable`. To experiment with that code, run `bin/console` for an interactive prompt.
+Instead of cluttering your models with callbacks, you declare listeners in `app/listeners`. Listenable automatically wires up the callbacks, instruments events, and runs your listener methods.
 
 ## Installation
-
-TODO: Replace `UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG` with your gem name right after releasing it to RubyGems.org. Please do not do it earlier due to security reasons. Alternatively, replace this section with instructions to install your gem from git if you don't plan to release to RubyGems.org.
 
 Install the gem and add to the application's Gemfile by executing:
 
 ```bash
-bundle add UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
+bundle add listenable
 ```
 
 If bundler is not being used to manage dependencies, install the gem by executing:
 
 ```bash
-gem install UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
+gem install listenable
 ```
 
 ## Usage
 
-TODO: Write usage instructions here
+#### 1. Define a model
+```ruby
+# app/models/user.rb
+class User < ApplicationRecord
+end
+```
+
+#### 2. Create a listener
+```ruby
+# app/listeners/user_listener.rb
+class UserListener
+  include Listenable
+
+  listen :on_created, :on_updated, :on_deleted
+
+  # Handle user creation
+  def on_created(record)
+    Rails.logger.info "User created: #{user.id}"
+    SendWelcomeEmailJob.perform_later(user)
+  end
+
+  # Handle user update
+  def on_updated(record)
+    Rails.logger.info "User updated: #{user.id}"
+    SendProfileUpdateNotificationJob.perform_later(user)
+  end
+
+  # Handle user deletion
+  def on_deleted(record)
+    Rails.logger.info "User deleted: #{user.id}"
+    ArchiveUserDataJob.perform_later(user)
+  end
+end
+```
+
+#### 3. Done
+* When a user is created, `UserListener.on_created` runs.
+* When a user is updated, `UserListener.on_updated` runs.
+* When a user is deleted, `UserListener.on_deleted` runs.
+
+Under the hood:
+* `after_create`, `after_update`, and `after_destroy` callbacks are injected into the model.
+* `ActiveSupport::Notifications.instrument` fires events like `user.created`.
+* The Railtie subscribes your listener methods to those events.
+
+## Supported hooks
+| Listener hook         | Model callback        |
+|-----------------------|-----------------------|
+| `on_created`          | `after_create`       |
+| `on_updated`          | `after_update`       |
+| `on_deleted`          | `after_destroy`      |
 
 ## Development
 
@@ -30,9 +78,13 @@ After checking out the repo, run `bin/setup` to install dependencies. Then, run 
 
 To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
 
+## Todo:
+* Create rake tasks to generate listener files.
+* RSpec tests for Railtie and integration tests.
+
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/listenable. This project is intended to be a safe, welcoming space for collaboration, and contributors are expected to adhere to the [code of conduct](https://github.com/[USERNAME]/listenable/blob/main/CODE_OF_CONDUCT.md).
+Bug reports and pull requests are welcome on GitHub at https://github.com/denmarkmeralpis/listenable. This project is intended to be a safe, welcoming space for collaboration, and contributors are expected to adhere to the [code of conduct](https://github.com/denmarkmeralpis/listenable/blob/main/CODE_OF_CONDUCT.md).
 
 ## License
 
@@ -40,4 +92,4 @@ The gem is available as open source under the terms of the [MIT License](https:/
 
 ## Code of Conduct
 
-Everyone interacting in the Listenable project's codebases, issue trackers, chat rooms and mailing lists is expected to follow the [code of conduct](https://github.com/[USERNAME]/listenable/blob/main/CODE_OF_CONDUCT.md).
+Everyone interacting in the Listenable project's codebases, issue trackers, chat rooms and mailing lists is expected to follow the [code of conduct](https://github.com/denmarkmeralpis/listenable/blob/main/CODE_OF_CONDUCT.md).
