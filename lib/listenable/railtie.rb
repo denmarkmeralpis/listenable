@@ -4,13 +4,13 @@ module Listenable
   class Railtie < Rails::Railtie
     initializer "listenable.load" do
       Rails.application.config.to_prepare do
-        # Load all listeners (supports nested paths)
+        # Load all listeners (recursive, supports namespaced)
         Dir[Rails.root.join("app/listeners/**/*.rb")].each { |f| require_dependency f }
 
-        # Wire models + listeners
+        # Find all listener classes
         ObjectSpace.each_object(Class).select { |klass| klass < Listenable }.each do |listener_class|
           model_class_name = listener_class.name.sub("Listener", "")
-          model_class = model_class_name.safe_constantize
+          model_class      = model_class_name.safe_constantize
           next unless model_class
 
           listener_class.pending_hooks.each do |hook|
@@ -19,22 +19,29 @@ module Listenable
             method   = "on_#{action}"
             event    = "#{model_class_name.underscore}.#{action}"
 
-            # Avoid duplicate subscriptions on reload
+            # Unsubscribe duplicates
             ActiveSupport::Notifications.notifier.listeners_for(event).each do |subscriber|
               ActiveSupport::Notifications.unsubscribe(subscriber)
             end
 
-            # Inject ActiveRecord callback
-            model_class.send(callback) do
-              ActiveSupport::Notifications.instrument(event, record: self)
+            # Inject AR callback once per model/event
+            injected_events = model_class.instance_variable_get(:@_listenable_injected_events) || []
+            unless injected_events.include?(event)
+              model_class.send(callback) do
+                next unless Listenable.enabled
+                ActiveSupport::Notifications.instrument(event, record: self)
+              end
+              injected_events << event
+              model_class.instance_variable_set(:@_listenable_injected_events, injected_events)
             end
 
-            # Subscribe listener
-            next unless listener_class.respond_to?(method)
-
-            ActiveSupport::Notifications.subscribe(event) do |*args|
-              _name, _start, _finish, _id, payload = args
-              listener_class.public_send(method, payload[:record])
+            # Subscribe listener (runtime-guarded)
+            if listener_class.respond_to?(method)
+              ActiveSupport::Notifications.subscribe(event) do |*args|
+                next unless Listenable.enabled
+                _name, _start, _finish, _id, payload = args
+                listener_class.public_send(method, payload[:record])
+              end
             end
           end
         end
