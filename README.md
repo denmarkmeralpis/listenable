@@ -36,19 +36,19 @@ class UserListener
   listen :on_created, :on_updated, :on_deleted
 
   # Handle user creation
-  def on_created(record)
+  def self.on_created(record)
     Rails.logger.info "User created: #{user.id}"
     SendWelcomeEmailJob.perform_later(user)
   end
 
   # Handle user update
-  def on_updated(record)
+  def self.on_updated(record)
     Rails.logger.info "User updated: #{user.id}"
     SendProfileUpdateNotificationJob.perform_later(user)
   end
 
   # Handle user deletion
-  def on_deleted(record)
+  def self.on_deleted(record)
     Rails.logger.info "User deleted: #{user.id}"
     ArchiveUserDataJob.perform_later(user)
   end
