@@ -122,6 +122,35 @@ RSpec.describe User do
 end
 ```
 
+## ⚠️ Important: Blocking Execution
+
+**Listenable executes listeners synchronously and will block the current thread.** This means that all listener methods run in the same request/transaction as your model operations, which can impact performance and response times.
+
+**Recommendation**: For production applications, always queue heavy operations in background jobs within your listener methods:
+
+```ruby
+class UserListener
+  include Listenable
+
+  listen :on_created, :on_updated
+
+  def self.on_created(user)
+    # ✅ Good - Queue background job
+    SendWelcomeEmailJob.perform_later(user)
+    NotifyAdminsJob.perform_later(user)
+  end
+
+  def self.on_updated(user)
+    # ❌ Avoid - Heavy synchronous operations
+    # UserAnalyticsService.new(user).calculate_metrics  # This blocks!
+
+    # ✅ Better - Queue in background
+    CalculateUserMetricsJob.perform_later(user)
+  end
+end
+```
+
+Keep listener methods lightweight and defer expensive operations (API calls, complex calculations, email sending, etc.) to background jobs to maintain application performance.
 
 ## Development
 
