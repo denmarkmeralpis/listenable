@@ -2,9 +2,9 @@
 
 module Listenable
   CALLBACK_MAP = {
-    "created" => :after_create,
-    "updated" => :after_update,
-    "deleted" => :after_destroy
+    'created' => :after_create,
+    'updated' => :after_update,
+    'deleted' => :after_destroy
   }.freeze
 
   def self.included(base)

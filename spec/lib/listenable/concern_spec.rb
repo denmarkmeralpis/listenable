@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-require "spec_helper"
+require 'spec_helper'
 
 RSpec.describe Listenable do
   before { Listenable.enabled = true }
 
-  it "accepts listen without async" do
+  it 'accepts listen without async' do
     klass = Class.new do
       include Listenable
 
@@ -15,7 +15,7 @@ RSpec.describe Listenable do
     expect { klass }.not_to raise_error
   end
 
-  it "accepts listen with async" do
+  it 'accepts listen with async' do
     klass = Class.new do
       include Listenable
 

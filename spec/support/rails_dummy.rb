@@ -1,12 +1,14 @@
-require "active_record"
-require "rails"
-require "ostruct"
-require "concurrent"
-require "listenable/railtie"
+# frozen_string_literal: true
+
+require 'active_record'
+require 'rails'
+require 'ostruct'
+require 'concurrent'
+require 'listenable/railtie'
 
 module Rails
   def self.root
-    Pathname.new(File.expand_path("../..", __dir__))
+    Pathname.new(File.expand_path('../..', __dir__))
   end
 
   def self.application
@@ -26,7 +28,7 @@ class OpenStruct
   end
 end
 
-ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
 ActiveRecord::Schema.define(version: 1) do
   create_table :users, force: true do |t|
     t.string :name
@@ -54,5 +56,5 @@ class UserListener
   end
 end
 
-initializer = Listenable::Railtie.initializers.find { |i| i.name == "listenable.load" }
+initializer = Listenable::Railtie.initializers.find { |i| i.name == 'listenable.load' }
 initializer.run(Rails.application)
