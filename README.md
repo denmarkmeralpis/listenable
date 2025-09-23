@@ -2,7 +2,7 @@
 
 Listenable is a Rails DSL that connects your ActiveRecord models to dedicated listener classes using `ActiveSupport::Notifications`.
 
-Instead of cluttering your models with callbacks, you declare listeners in `app/listeners`. Listenable automatically wires up the callbacks, instruments events, and runs your listener methods.
+Instead of cluttering your models with callbacks, you declare listeners in `app/listeners`. Listenable automatically wires up the callbacks, instruments events, and runs your listener methods. It supports both synchronous (blocking) and asynchronous (non-blocking) execution modes.
 
 ## Installation
 
@@ -17,6 +17,8 @@ If bundler is not being used to manage dependencies, install the gem by executin
 ```bash
 gem install listenable
 ```
+
+**Note**: For asynchronous listener support, make sure you have the `concurrent-ruby` gem installed (usually included with Rails by default).
 
 ## Usage
 
@@ -65,12 +67,83 @@ Under the hood:
 * `ActiveSupport::Notifications.instrument` fires events like `user.created`.
 * The Railtie subscribes your listener methods to those events.
 
+## Synchronous vs Asynchronous Execution
+
+Listenable supports both synchronous (blocking) and asynchronous (non-blocking) listener execution:
+
+### Synchronous Listeners (Default)
+By default, listeners execute synchronously in the same thread as your model operations:
+
+```ruby
+class UserListener
+  include Listenable
+
+  # Synchronous execution (default)
+  listen :on_created, :on_updated, :on_deleted
+
+  def self.on_created(user)
+    Rails.logger.info "User created: #{user.id}"
+    # This runs in the same request thread
+  end
+end
+```
+
+### Asynchronous Listeners
+For non-blocking execution, use the `async: true` option:
+
+```ruby
+class UserListener
+  include Listenable
+
+  # Asynchronous execution - runs in background thread
+  listen :on_created, :on_updated, :on_deleted, async: true
+
+  def self.on_created(user)
+    Rails.logger.info "User created: #{user.id}"
+    # This runs in a separate thread, doesn't block the request
+    SendWelcomeEmailService.call(user)  # Safe for heavier operations
+  end
+end
+```
+
+### Mixed Execution Modes
+You can mix synchronous and asynchronous listeners by calling `listen` multiple times:
+
+```ruby
+class UserListener
+  include Listenable
+
+  # Some listeners run synchronously
+  listen :on_created
+
+  # Others run asynchronously
+  listen :on_updated, :on_deleted, async: true
+
+  def self.on_created(user)
+    # Runs synchronously - blocks request
+    user.update!(status: 'active')
+  end
+
+  def self.on_updated(user)
+    # Runs asynchronously - doesn't block request
+    UserAnalyticsService.new(user).calculate_metrics
+  end
+
+  def self.on_deleted(user)
+    # Also runs asynchronously
+    CleanupUserDataService.call(user)
+  end
+end
+```
+
 ## Supported hooks
-| Listener hook         | Model callback        |
-|-----------------------|-----------------------|
-| `on_created`          | `after_create`       |
-| `on_updated`          | `after_update`       |
-| `on_deleted`          | `after_destroy`      |
+| Listener hook         | Model callback        | Execution Mode |
+|-----------------------|-----------------------|----------------|
+| `on_created`          | `after_create`       | Synchronous (default) or Asynchronous with `async: true` |
+| `on_updated`          | `after_update`       | Synchronous (default) or Asynchronous with `async: true` |
+| `on_deleted`          | `after_destroy`      | Synchronous (default) or Asynchronous with `async: true` |
+
+All hooks support both synchronous and asynchronous execution modes via the `async: true` option.
 
 ## Runtime Toggle
 By default, listeners are always active in development and production.
@@ -115,33 +188,36 @@ RSpec.describe User do
     User.create!(name: 'Pedro')
   end
 
-  it 'fires listeners when enabled', listenable: true do
+  it 'fires synchronous listeners when enabled', listenable: true do
     expect(UserListener).to receive(:on_created)
     User.create!(name: 'Pedro')
   end
 end
 ```
 
-## ⚠️ Important: Blocking Execution
+## ⚠️ Important: Execution Modes and Performance
 
-**Listenable executes listeners synchronously and will block the current thread.** This means that all listener methods run in the same request/transaction as your model operations, which can impact performance and response times.
+### Synchronous Listeners (Default Behavior)
 
-**Recommendation**: For production applications, always queue heavy operations in background jobs within your listener methods:
+**Synchronous listeners execute in the same thread and will block the current request.** This means that all synchronous listener methods run in the same request/transaction as your model operations, which can impact performance and response times.
+
+**For synchronous listeners**: Always queue heavy operations in background jobs to maintain application performance:
 
 ```ruby
 class UserListener
   include Listenable
 
+  # Synchronous listeners (default)
   listen :on_created, :on_updated
 
   def self.on_created(user)
-    # ✅ Good - Queue background job
+    # ✅ Good - Lightweight operations or queue background jobs
     SendWelcomeEmailJob.perform_later(user)
     NotifyAdminsJob.perform_later(user)
   end
 
   def self.on_updated(user)
-    # ❌ Avoid - Heavy synchronous operations
+    # ❌ Avoid - Heavy synchronous operations that block requests
     # UserAnalyticsService.new(user).calculate_metrics  # This blocks!
 
     # ✅ Better - Queue in background
@@ -150,7 +226,44 @@ class UserListener
 end
 ```
 
-Keep listener methods lightweight and defer expensive operations (API calls, complex calculations, email sending, etc.) to background jobs to maintain application performance.
+### Asynchronous Listeners (Non-blocking)
+
+**Asynchronous listeners execute in separate threads and don't block requests.** This allows for heavier operations without impacting response times:
+
+```ruby
+class UserListener
+  include Listenable
+
+  # Asynchronous listeners - safe for heavier operations
+  listen :on_created, :on_updated, async: true
+
+  def self.on_created(user)
+    # ✅ Safe - Runs in background thread
+    UserAnalyticsService.new(user).calculate_metrics
+    SendWelcomeEmailService.call(user)
+  end
+
+  def self.on_updated(user)
+    # ✅ Safe - Heavy operations won't block requests
+    ExternalApiService.notify_user_update(user)
+    GenerateUserReportService.call(user)
+  end
+end
+```
+
+**Note**: Asynchronous listeners use `Concurrent::Promises` for thread-safe execution. Errors in async listeners are logged but won't affect the main request flow.
+
+### Choosing the Right Mode
+
+- **Use synchronous listeners** for:
+  - Critical operations that must complete before the request finishes
+  - Simple, fast operations (logging, simple updates)
+  - Operations that need to participate in the same database transaction
+
+- **Use asynchronous listeners** for:
+  - Heavy computations or external API calls
+  - Non-critical operations that can fail independently
+  - Operations that don't need to complete before the response is sent
 
 ## Development
 
@@ -160,7 +273,6 @@ To install this gem onto your local machine, run `bundle exec rake install`. To 
 
 ## Todo:
 * Create rake tasks to generate listener files.
-* RSpec tests for Railtie and integration tests.
 
 ## Contributing
 
