@@ -12,9 +12,12 @@ module Listenable
   end
 
   module ClassMethods
-    def listen(*hooks)
+    def listen(*hooks, async: false)
       @pending_hooks ||= []
-      @pending_hooks.concat(hooks.map(&:to_s))
+
+      hooks.each do |hook|
+        @pending_hooks << { name: hook.to_s, async: async }
+      end
     end
 
     def pending_hooks
