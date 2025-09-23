@@ -136,65 +136,6 @@ class UserListener
 end
 ```
 
-## Supported hooks
-| Listener hook         | Model callback        | Execution Mode |
-|-----------------------|-----------------------|----------------|
-| `on_created`          | `after_create`       | Synchronous (default) or Asynchronous with `async: true` |
-| `on_updated`          | `after_update`       | Synchronous (default) or Asynchronous with `async: true` |
-| `on_deleted`          | `after_destroy`      | Synchronous (default) or Asynchronous with `async: true` |
-
-All hooks support both synchronous and asynchronous execution modes via the `async: true` option.
-
-## Runtime Toggle
-By default, listeners are always active in development and production.
-
-You can enable/disable them dynamically at runtime using:
-
-```ruby
-Listenable.enabled = false  # disable all listeners
-Listenable.enabled = true   # re-enable listeners
-```
-
-This does not require restarting your Rails server or test suite.
-
-## RSpec/Test Integration
-You usually don’t want listeners firing in tests (e.g. sending jobs or emails).
-
-Disable them globally in your test suite:
-
-```ruby
-# spec/rails_helper.rb
-RSpec.configure do |config|
-  config.before(:suite) do
-    Listenable.enabled = false
-  end
-
-  # Enable listeners selectively
-  config.around(:each, listenable: true) do |example|
-    prev = Listenable.enabled
-    Listenable.enabled = true
-    example.run
-    Listenable.enabled = prev
-  end
-end
-```
-
-Now:
-
-```ruby
-RSpec.describe User do
-  it 'does not fire listeners by default' do
-    expect(UserListener).not_to receive(:on_created)
-    User.create!(name: 'Pedro')
-  end
-
-  it 'fires synchronous listeners when enabled', listenable: true do
-    expect(UserListener).to receive(:on_created)
-    User.create!(name: 'Pedro')
-  end
-end
-```
-
 ## ⚠️ Important: Execution Modes and Performance
 
 ### Synchronous Listeners (Default Behavior)
@@ -264,6 +205,65 @@ end
   - Heavy computations or external API calls
   - Non-critical operations that can fail independently
   - Operations that don't need to complete before the response is sent
+
+## Supported hooks
+| Listener hook         | Model callback        | Execution Mode |
+|-----------------------|-----------------------|----------------|
+| `on_created`          | `after_create`       | Synchronous (default) or Asynchronous with `async: true` |
+| `on_updated`          | `after_update`       | Synchronous (default) or Asynchronous with `async: true` |
+| `on_deleted`          | `after_destroy`      | Synchronous (default) or Asynchronous with `async: true` |
+
+All hooks support both synchronous and asynchronous execution modes via the `async: true` option.
+
+## Runtime Toggle
+By default, listeners are always active in development and production.
+
+You can enable/disable them dynamically at runtime using:
+
+```ruby
+Listenable.enabled = false  # disable all listeners
+Listenable.enabled = true   # re-enable listeners
+```
+
+This does not require restarting your Rails server or test suite.
+
+## RSpec/Test Integration
+You usually don’t want listeners firing in tests (e.g. sending jobs or emails).
+
+Disable them globally in your test suite:
+
+```ruby
+# spec/rails_helper.rb
+RSpec.configure do |config|
+  config.before(:suite) do
+    Listenable.enabled = false
+  end
+
+  # Enable listeners selectively
+  config.around(:each, listenable: true) do |example|
+    prev = Listenable.enabled
+    Listenable.enabled = true
+    example.run
+    Listenable.enabled = prev
+  end
+end
+```
+
+Now:
+
+```ruby
+RSpec.describe User do
+  it 'does not fire listeners by default' do
+    expect(UserListener).not_to receive(:on_created)
+    User.create!(name: 'Pedro')
+  end
+
+  it 'fires synchronous listeners when enabled', listenable: true do
+    expect(UserListener).to receive(:on_created)
+    User.create!(name: 'Pedro')
+  end
+end
+```
 
 ## Development
 
