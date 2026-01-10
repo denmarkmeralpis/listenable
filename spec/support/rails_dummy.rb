@@ -28,7 +28,7 @@ class OpenStruct
   end
 end
 
-ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: ':memory:')
+ActiveRecord::Base.establish_connection(adapter: 'sqlite3', database: 'tmp/test.db')
 ActiveRecord::Schema.define(version: 1) do
   create_table :users, force: true do |t|
     t.string :name
@@ -44,13 +44,15 @@ class UserListener
   listen :on_updated, async: true
 
   class << self
-    attr_accessor :sync_called, :async_called
+    attr_accessor :sync_called, :async_called, :async_user_id
 
     def on_created(_)
       self.sync_called = true
     end
 
-    def on_updated(_)
+    def on_updated(user)
+      # Verify we received a reloaded record with proper connection
+      self.async_user_id = user&.id
       self.async_called = true
     end
   end

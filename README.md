@@ -194,28 +194,78 @@ end
 
 **Note**: Asynchronous listeners use `Concurrent::Promises` for thread-safe execution. Errors in async listeners are logged but won't affect the main request flow.
 
-### Choosing the Right Mode
+#### Database Connection Management
 
-- **Use synchronous listeners** for:
-  - Critical operations that must complete before the request finishes
-  - Simple, fast operations (logging, simple updates)
-  - Operations that need to participate in the same database transaction
+Asynchronous listeners are automatically wrapped in ActiveRecord's connection pool management (`connection_pool.with_connection`) to prevent connection pool exhaustion. The record is reloaded in the async thread to ensure thread-safe database access:
 
-- **Use asynchronous listeners** for:
-  - Heavy computations or external API calls
-  - Non-critical operations that can fail independently
-  - Operations that don't need to complete before the response is sent
+```ruby
+class UserListener
+  include Listenable
 
-## Supported hooks
-| Listener hook         | Model callback        | Execution Mode |
-|-----------------------|-----------------------|----------------|
-| `on_created`          | `after_create`       | Synchronous (default) or Asynchronous with `async: true` |
-| `on_updated`          | `after_update`       | Synchronous (default) or Asynchronous with `async: true` |
-| `on_deleted`          | `after_destroy`      | Synchronous (default) or Asynchronous with `async: true` |
+  listen :on_updated, async: true
 
-All hooks support both synchronous and asynchronous execution modes via the `async: true` option.
+  def self.on_updated(user)
+    # The record is automatically reloaded in this thread
+    # Safe to access attributes and associations
+    user.name  # ✅ Safe
+    user.orders.count  # ✅ Safe - proper connection management
 
-## Runtime Toggle
+    # Heavy operations that query the database
+    UserAnalyticsService.new(user).calculate_metrics  # ✅ Safe
+  end
+end
+```
+
+**Important**: The record passed to async listeners is reloaded from the database in the async thread. If the record is deleted before the async listener executes, the listener will receive `nil` and a warning will be logged.
+
+#### Thread Pool & Bulk Operations
+
+Async listeners use a **bounded thread pool** that automatically scales based on your database connection pool size:
+
+```ruby
+# Automatically configured based on your connection pool
+Listenable.async_executor  # Auto-scales intelligently
+```
+
+**Auto-Scaling Formula** (Very Conservative):
+- `max_threads`: **25% of connection pool size** (minimum 1, maximum 3)
+- `max_queue`: 10,000 tasks can be queued
+- `fallback_policy`: Falls back to synchronous execution if queue is full
+
+**Examples**:
+- Connection pool of 5 → **1 thread** for async listeners
+- Connection pool of 10 → **2 threads** for async listeners
+- Connection pool of 20 → **3 threads** for async listeners (capped at 3)
+
+**Why 25%?** Your main application needs most connections for handling requests. By using only 25% of the pool for async work, we ensure:
+- Bulk operations never exhaust the connection pool
+- Your main app always has connections available
+- Async work is processed reliably through queuing
+
+This ensures that bulk operations (updating thousands of records) don't exhaust your database connection pool:
+
+```ruby
+# This works safely even with thousands of records
+CSV.foreach('users.csv') do |row|
+  user = User.find(row['id'])
+  user.update!(name: row['name'])  # Async listeners execute without exhausting pool
+end
+```
+
+**Manual Override (if needed)**:
+
+If you want to override the auto-scaling, you can reset the executor with a custom size:
+
+```ruby
+# config/initializers/listenable.rb
+
+# Increase for larger connection pools
+Listenable.reset_async_executor!  # Reset existing executor
+# Then create a custom executor if needed
+# (Note: Auto-scaling is recommended for most cases)
+```
+
+**⚠️ Warning**: The auto-scaling is conservative by design. Only override if you have a very large connection pool (20+) and understand the implications.
 By default, listeners are always active in development and production.
 
 You can enable/disable them dynamically at runtime using:

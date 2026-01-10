@@ -46,10 +46,35 @@ module Listenable
               record = payload[:record]
 
               if async
-                Concurrent::Promises.future do
-                  listener_class.public_send(method, record)
+                # Pass only the record ID and class to avoid connection pool issues
+                record_id = record.id
+                record_class = record.class
+
+                # Use bounded thread pool to prevent spawning unlimited threads
+                Concurrent::Promises.future_on(Listenable.async_executor) do
+                  begin
+                    # Wrap in connection pool management to prevent connection exhaustion
+                    ActiveRecord::Base.connection_pool.with_connection do
+                      # Reload the record in this thread's connection
+                      reloaded_record = record_class.find_by(id: record_id)
+
+                      if reloaded_record
+                        listener_class.public_send(method, reloaded_record)
+                      elsif defined?(Rails) && Rails.logger
+                        Rails.logger.warn("[Listenable] Record #{record_class}##{record_id} not found for #{listener_class}##{method}")
+                      end
+                    end
+                  rescue => e
+                    if defined?(Rails) && Rails.logger
+                      Rails.logger.error("[Listenable] #{listener_class}##{method} failed: #{e.message}")
+                      Rails.logger.error(e.backtrace.join("\n"))
+                    end
+                    raise e  # Re-raise so the promise chain can handle it
+                  end
                 end.rescue do |e|
-                  Rails.logger.error("[Listenable] #{listener_class}##{method} failed: #{e.message}")
+                  if defined?(Rails) && Rails.logger
+                    Rails.logger.error("[Listenable] Promise failed for #{listener_class}##{method}: #{e.message}")
+                  end
                 end
               else
                 listener_class.public_send(method, record)
