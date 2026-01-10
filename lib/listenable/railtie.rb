@@ -52,25 +52,25 @@ module Listenable
 
                 # Use bounded thread pool to prevent spawning unlimited threads
                 Concurrent::Promises.future_on(Listenable.async_executor) do
-                  begin
-                    # Wrap in connection pool management to prevent connection exhaustion
-                    ActiveRecord::Base.connection_pool.with_connection do
-                      # Reload the record in this thread's connection
-                      reloaded_record = record_class.find_by(id: record_id)
+                  # Wrap in connection pool management to prevent connection exhaustion
+                  ActiveRecord::Base.connection_pool.with_connection do
+                    # Reload the record in this thread's connection
+                    reloaded_record = record_class.find_by(id: record_id)
 
-                      if reloaded_record
-                        listener_class.public_send(method, reloaded_record)
-                      elsif defined?(Rails) && Rails.logger
-                        Rails.logger.warn("[Listenable] Record #{record_class}##{record_id} not found for #{listener_class}##{method}")
-                      end
+                    if reloaded_record
+                      listener_class.public_send(method, reloaded_record)
+                    elsif defined?(Rails) && Rails.logger
+                      Rails.logger.warn(
+                        "[Listenable] Record #{record_class}##{record_id} not found for #{listener_class}##{method}"
+                      )
                     end
-                  rescue => e
-                    if defined?(Rails) && Rails.logger
-                      Rails.logger.error("[Listenable] #{listener_class}##{method} failed: #{e.message}")
-                      Rails.logger.error(e.backtrace.join("\n"))
-                    end
-                    raise e  # Re-raise so the promise chain can handle it
                   end
+                rescue StandardError => e
+                  if defined?(Rails) && Rails.logger
+                    Rails.logger.error("[Listenable] #{listener_class}##{method} failed: #{e.message}")
+                    Rails.logger.error(e.backtrace.join("\n"))
+                  end
+                  raise e # Re-raise so the promise chain can handle it
                 end.rescue do |e|
                   if defined?(Rails) && Rails.logger
                     Rails.logger.error("[Listenable] Promise failed for #{listener_class}##{method}: #{e.message}")

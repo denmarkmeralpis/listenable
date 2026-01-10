@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    listenable (0.2.0)
+    listenable (0.3.0)
       activesupport (>= 6.0)
       concurrent-ruby (>= 1.1)
 

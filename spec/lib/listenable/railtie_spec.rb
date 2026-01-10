@@ -33,7 +33,7 @@ RSpec.describe 'Listenable Railtie integration' do
 
   it 'handles deleted records gracefully in async listeners' do
     user = User.create!(name: 'Test User')
-    user_id = user.id
+    user.id
 
     # Update and immediately delete
     user.update!(name: 'Updated')
