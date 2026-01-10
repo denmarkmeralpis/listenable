@@ -2,13 +2,27 @@
 
 module Listenable
   class Railtie < Rails::Railtie
+    # Cleanup on Rails reload to prevent memory leaks
+    config.to_prepare do
+      Listenable.cleanup!
+    end
+
+    # Graceful shutdown on Rails exit
+    config.after_initialize do
+      at_exit do
+        Listenable.shutdown_async_executor!
+      end
+    end
+
     initializer 'listenable.load' do
       Rails.application.config.to_prepare do
         # Load all listeners (recursive, supports namespaced)
-        Dir[Rails.root.join('app/listeners/**/*.rb')].each { |f| require_dependency f }
+        listener_files = Dir[Rails.root.join('app/listeners/**/*.rb')]
+        listener_files.each { |f| require_dependency f }
 
         # Find all listener classes
-        ObjectSpace.each_object(Class).select { |klass| klass < Listenable }.each do |listener_class|
+        listener_classes = ObjectSpace.each_object(Class).select { |klass| klass < Listenable }
+        listener_classes.each do |listener_class|
           model_class_name = listener_class.name.sub('Listener', '')
           model_class      = model_class_name.safe_constantize
           next unless model_class
@@ -39,49 +53,75 @@ module Listenable
 
             next unless listener_class.respond_to?(method)
 
-            ActiveSupport::Notifications.subscribe(event) do |*args|
+            # Subscribe and track subscriber for cleanup
+            subscriber = ActiveSupport::Notifications.subscribe(event) do |*args|
               next unless Listenable.enabled
 
               _name, _start, _finish, _id, payload = args
               record = payload[:record]
 
               if async
-                # Pass only the record ID and class to avoid connection pool issues
-                record_id = record.id
-                record_class = record.class
-
-                # Use bounded thread pool to prevent spawning unlimited threads
-                Concurrent::Promises.future_on(Listenable.async_executor) do
-                  # Wrap in connection pool management to prevent connection exhaustion
-                  ActiveRecord::Base.connection_pool.with_connection do
-                    # Reload the record in this thread's connection
-                    reloaded_record = record_class.find_by(id: record_id)
-
-                    if reloaded_record
-                      listener_class.public_send(method, reloaded_record)
-                    elsif defined?(Rails) && Rails.logger
-                      Rails.logger.warn(
-                        "[Listenable] Record #{record_class}##{record_id} not found for #{listener_class}##{method}"
-                      )
-                    end
-                  end
-                rescue StandardError => e
-                  if defined?(Rails) && Rails.logger
-                    Rails.logger.error("[Listenable] #{listener_class}##{method} failed: #{e.message}")
-                    Rails.logger.error(e.backtrace.join("\n"))
-                  end
-                  raise e # Re-raise so the promise chain can handle it
-                end.rescue do |e|
-                  if defined?(Rails) && Rails.logger
-                    Rails.logger.error("[Listenable] Promise failed for #{listener_class}##{method}: #{e.message}")
-                  end
-                end
+                Railtie.handle_async_listener(listener_class, method, record)
               else
-                listener_class.public_send(method, record)
+                Railtie.handle_sync_listener(listener_class, method, record)
               end
             end
+
+            # Track subscriber for cleanup on reload
+            Listenable.subscribers << subscriber
           end
         end
+      end
+    end
+
+    class << self
+      # Handle async listener with proper error handling and connection management
+      def handle_async_listener(listener_class, method, record)
+        # Extract minimal data to pass to thread
+        record_id = record.id
+        record_class = record.class
+
+        # Use bounded thread pool to prevent spawning unlimited threads
+        Concurrent::Promises.future_on(Listenable.async_executor) do
+          # Wrap in connection pool management to prevent connection exhaustion
+          ActiveRecord::Base.connection_pool.with_connection do
+            execute_listener(listener_class, method, record_class, record_id)
+          rescue StandardError => e
+            log_error(listener_class, method, e)
+          end
+        end.rescue do |e|
+          Rails.logger&.error(
+            "[Listenable] Promise failed for #{listener_class}##{method}: #{e.message}"
+          )
+        end
+      end
+
+      # Handle sync listener with proper error handling
+      def handle_sync_listener(listener_class, method, record)
+        listener_class.public_send(method, record)
+      rescue StandardError => e
+        log_error(listener_class, method, e)
+        raise # Re-raise for sync listeners to maintain transaction integrity
+      end
+
+      private
+
+      def execute_listener(listener_class, method, record_class, record_id)
+        reloaded_record = record_class.find_by(id: record_id)
+
+        if reloaded_record
+          listener_class.public_send(method, reloaded_record)
+        else
+          Rails.logger&.warn(
+            "[Listenable] Record #{record_class}##{record_id} not found for #{listener_class}##{method}"
+          )
+        end
+      end
+
+      def log_error(listener_class, method, error)
+        Rails.logger&.error(
+          "[Listenable] #{listener_class}##{method} failed: #{error.message}\n#{error.backtrace.first(5).join("\n")}"
+        )
       end
     end
   end
