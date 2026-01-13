@@ -38,6 +38,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'concurrent-ruby', '>= 1.1'
 
   spec.add_development_dependency 'activerecord', '>= 6.0'
+  spec.add_development_dependency 'ostruct'
   spec.add_development_dependency 'rails', '>= 6.0'
   spec.add_development_dependency 'sqlite3', '~> 2.1'
 end

@@ -4,6 +4,7 @@ require 'active_support'
 require 'active_support/concern'
 require 'active_support/notifications'
 require 'concurrent'
+require 'set'
 
 require_relative 'listenable/version'
 require_relative 'listenable/concern'
@@ -12,10 +13,31 @@ require_relative 'listenable/railtie' if defined?(Rails)
 module Listenable
   mattr_accessor :enabled, default: true
 
+  # Connection pool safety configuration
+  mattr_accessor :connection_checkout_timeout, default: 5 # seconds
+  mattr_accessor :max_thread_pool_ratio, default: 0.25 # 25% of connection pool
+  mattr_accessor :max_thread_pool_size, default: 3 # absolute max threads
+
   class Error < StandardError; end
+  class ConnectionPoolExhausted < Error; end
 
   class << self
     attr_writer :async_executor
+
+    # Registry of all listener classes (better than ObjectSpace scan)
+    def listener_classes
+      @listener_classes ||= Set.new
+    end
+
+    # Register a listener class when Listenable is included
+    def register_listener(klass)
+      listener_classes.add(klass) if klass.name && !klass.name.empty?
+    end
+
+    # Clear registry on reload
+    def clear_listeners!
+      @listener_classes = Set.new
+    end
 
     # Track active subscribers to prevent memory leaks on reload
     def subscribers
@@ -23,13 +45,13 @@ module Listenable
     end
 
     # Calculate a safe thread pool size based on connection pool
-    # Very conservative: use only 1/4 of pool (min 1, max 3)
+    # Very conservative: use configurable ratio of pool (default 25%)
     def default_thread_pool_size
       return 2 unless defined?(ActiveRecord::Base)
 
       pool_size = ActiveRecord::Base.connection_pool.size
-      # Use 25% of pool, but at least 1 thread, max 3 threads
-      [[pool_size / 4, 1].max, 3].min
+      # Use configured ratio of pool, but at least 1 thread, max configured limit
+      [[pool_size * max_thread_pool_ratio, 1].max, max_thread_pool_size].min.to_i
     end
 
     # Thread pool executor for async listeners
@@ -54,6 +76,9 @@ module Listenable
         Rails.logger&.warn("[Listenable] Failed to unsubscribe: #{e.message}")
       end
       @subscribers = []
+
+      # Clear listener registry for fresh reload
+      clear_listeners!
 
       # Shutdown thread pool gracefully
       shutdown_async_executor!
