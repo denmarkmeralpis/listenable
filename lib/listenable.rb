@@ -4,7 +4,6 @@ require 'active_support'
 require 'active_support/concern'
 require 'active_support/notifications'
 require 'concurrent'
-require 'set'
 
 require_relative 'listenable/version'
 require_relative 'listenable/concern'

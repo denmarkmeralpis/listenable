@@ -3,8 +3,8 @@
 module Listenable
   class Railtie < Rails::Railtie
     AFTER_COMMIT_MAP = {
-      'created'  => :create,
-      'updated'  => :update,
+      'created' => :create,
+      'updated' => :update,
       'destroyed' => :destroy
     }.freeze
 
